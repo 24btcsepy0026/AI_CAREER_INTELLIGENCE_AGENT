@@ -1,0 +1,17 @@
+# Secrets — never commit
+.env
+.streamlit/secrets.toml
+
+# Database
+*.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/

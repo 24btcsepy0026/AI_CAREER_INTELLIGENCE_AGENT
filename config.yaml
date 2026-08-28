@@ -1,0 +1,190 @@
+target_role: "Data Analyst"
+target_city: "Bengaluru"
+keywords:
+  - "data analyst"
+  - "SQL"
+  - "Python"
+  - "Power BI"
+  - "Tableau"
+  - "ETL"
+my_skills:
+  - "Python"
+  - "SQL"
+  - "Excel"
+  - "Pandas"
+  - "NumPy"
+  - "data visualisation"
+experience_years: 2
+db_path: "edgedash.db"
+min_fit_score: 60
+
+# Sources to enable. Each name must exist in the SOURCES registry.
+sources:
+  - "arbeitnow"
+
+# Set to true to skip all network calls and use MockFetcher instead.
+# Useful for offline development or CI runs.
+use_mock_fetcher: false
+
+# LLM provider: "gemini" (needs GEMINI_API_KEY in .env) or "ollama" (local, no key)
+llm_provider: "gemini"
+llm_model: "gemini-flash-lite-latest"
+
+# --- Scoring weights (must sum to 1.0) ---
+# Tune these without touching any code.
+target_seniority: "mid"      # junior | mid | senior | lead
+score_batch_size: 25         # max listings scored per cycle (rule 21)
+weight_skill_match:   0.45
+weight_seniority_fit: 0.25
+weight_location_fit:  0.15
+weight_recency:       0.15
+
+# --- Skill alias map (rule 23) ---
+# THIS MAP IS MINE TO EDIT. Adding entries is expected as I see my own data.
+# canonical name (left) -> list of aliases (right) that collapse to it.
+# Rule: when unsure, leave skills SEPARATE. Fragmentation you can see beats
+# tidiness you can't check. Never merge skills that have different hiring meanings.
+skill_aliases:
+  # ── Cloud ──────────────────────────────────────────────────────────────
+  "gcp":
+    - "google cloud"
+    - "google cloud platform"
+    - "google cloud platform (gcp)"
+
+  "aws":
+    - "amazon web services"
+
+  # ── Containers / Infra ─────────────────────────────────────────────────
+  "kubernetes":
+    - "k8s"
+    - "docker and kubernetes"
+    - "containerization and orchestration (docker, kubernetes)"
+
+  "ci/cd":
+    - "ci cd"
+    - "cicd"
+    - "ci/cd pipelines"
+    - "git/gitlab ci pipelines"
+
+  "infrastructure as code":
+    - "infrastructure-as-code"
+    - "iac"
+    - "infrastructure as code (terraform)"
+
+  # ── Databases ──────────────────────────────────────────────────────────
+  "postgresql":
+    - "postgres"
+    - "psql"
+
+  "sql":
+    - "mysql"
+    - "t-sql"
+    - "pl/sql"
+    - "sql queries"
+    - "sql/mysql"
+    - "sql server"
+
+  # ── Languages ──────────────────────────────────────────────────────────
+  "python":
+    - "python3"
+    - "python 3"
+    - "python or a comparable language"
+    - "c# or python"
+
+  "c#":
+    - "c# .net / .net core"
+    - "entity framework für ms sql-server"
+
+  "typescript":
+    - "typescript/javascript"
+
+  # ── BI / Visualisation ─────────────────────────────────────────────────
+  "power bi":
+    - "powerbi"
+    - "power-bi"
+    - "ms power bi"
+    - "visualization tool (looker, tableau, or power bi)"
+
+  "tableau":
+    - "tableau desktop"
+    - "tableau server"
+
+  "data visualisation":
+    - "data visualization"
+    - "data viz"
+    - "dataviz"
+
+  # ── Office ─────────────────────────────────────────────────────────────
+  "excel":
+    - "ms excel"
+    - "microsoft excel"
+    - "advanced excel"
+
+  # ── ML / AI ────────────────────────────────────────────────────────────
+  "machine learning":
+    - "ml"
+    - "machine-learning"
+
+  "deep learning":
+    - "dl"
+    - "deep-learning"
+
+  # ── Languages (human) ──────────────────────────────────────────────────
+  "english":
+    - "englisch"
+    - "fluent english"
+    - "fluency in english"
+    - "fluent in english"
+    - "c1 english"
+    - "written and spoken english"
+    - "professional working proficiency in english"
+    - "communication and presentation skills in english"
+
+  "german":
+    - "deutsch"
+    - "fluency in german"
+    - "very good german language skills (at least c1)"
+    - "deutsch (level b2+)"
+    - "deutsch (min. b2)"
+    - "german (c1 minimum)"
+
+  # ── REST / APIs ────────────────────────────────────────────────────────
+  "rest apis":
+    - "rest-apis"
+    - "restful services"
+    - "graphql apis"
+    - "apis"
+
+  # ── Pandas ─────────────────────────────────────────────────────────────
+  "pandas":
+    - "pandas library"
+
+# --- Orchestration thresholds (rule 29) ---
+# The Orchestrator reads these to set explicit stop conditions per agent.
+fetch_interval_hours: 6      # run Fetcher if last fetch was >= this many hours ago
+score_max_seconds:    300    # Scorer hard time ceiling per cycle
+analyse_max_seconds:  120    # GapAnalyzer hard time ceiling per cycle
+fetch_max_pages:      5      # max pages Fetcher may request per source
+fetch_max_listings:   500    # max raw listings Fetcher may store per cycle
+
+# --- Verification thresholds (edgedash/verification.py) ---
+# Every threshold is named after the failure mode it catches.
+# Tighten them as your dataset grows; loosen them only with a reason.
+
+# check_score_spread — catches score compression / inflation.
+# A model that gives every listing ~the same score is useless.
+min_score_spread:  10     # FAIL if max(scores) - min(scores) < this
+min_score_stdev:   5.0    # FAIL if stdev of scores < this
+
+# check_extraction_sanity — catches a broken or hallucinating extractor.
+# An extractor that returns [] for most listings has silently failed.
+# An extractor that returns a 25-word sentence as one "skill" has lost the plot.
+max_empty_extraction_pct: 20.0   # FAIL if % of listings with empty required_skills > this
+max_skills_per_listing:   40     # FAIL if any single listing has more required skills than this
+
+# check_gap_sample_size — catches ranking a rumour.
+# A gap seen in only 1-2 listings has high variance and low signal.
+min_gap_sample:  3    # FAIL if the top-ranked gap came from fewer listings than this
+
+# check_freshness — catches stale data that makes recency scores meaningless.
+max_data_age_days:  3    # FAIL if the newest listing is older than this many days

@@ -1,0 +1,21 @@
+# EdgeDash dependencies
+# Reason: PyYAML — stdlib has no YAML parser; used in edgedash/config.py
+pyyaml==6.0.2
+
+# Reason: requests — the single HTTP client for all source calls (edgedash/sources/http.py)
+requests==2.32.3
+
+# Reason: google-generativeai — Gemini LLM provider (edgedash/llm.py); only imported there
+google-generativeai==0.8.5
+
+# Reason: jsonschema — validates every LLM response before use (steering rule 17)
+jsonschema==4.23.0
+
+# Reason: python-dotenv — loads .env into os.environ in one place (edgedash/config.py)
+python-dotenv==1.0.1
+
+# Reason: streamlit — read-only dashboard (app.py); no other UI dependency needed
+streamlit==1.39.0
+
+# Reason: psycopg2-binary — Postgres driver for storage backend
+psycopg2-binary==2.9.9
