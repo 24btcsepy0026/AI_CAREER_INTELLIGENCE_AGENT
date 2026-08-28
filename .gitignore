@@ -16,5 +16,7 @@ build/
 .venv/
 venv/
 
+# Certificates
+Certificate And Badges/
 #Certificate And Badges 
 Certificate And Badges/
