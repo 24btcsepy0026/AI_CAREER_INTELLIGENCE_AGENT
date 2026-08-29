@@ -573,7 +573,7 @@ def count_unscored(path: str) -> int:
     with _tx(path) as cx:
         cur = _execute(cx, "SELECT COUNT(*) FROM listings WHERE fit_score IS NULL")
         row = cur.fetchone()
-        return list(row.values())[0] if row else 0
+        return list(dict(row).values())[0] if row else 0
 
 
 def get_unscored_listings(path: str, limit: int) -> list[dict]:
