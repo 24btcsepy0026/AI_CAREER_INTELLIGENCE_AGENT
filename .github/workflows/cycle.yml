@@ -33,12 +33,13 @@ jobs:
 
       - name: Run Cycle
         run: |
-          # The pipefail option in GH actions ensures that if python fails,
-          # the entire step fails even with tee.
+          # pipefail: if python fails, the entire step fails (tee would otherwise mask it)
+          set -o pipefail
           python run_cycle.py 2>&1 | tee cycle.log
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PYTHONIOENCODING: "utf-8"
 
       - name: Upload Cycle Log
         uses: actions/upload-artifact@v4

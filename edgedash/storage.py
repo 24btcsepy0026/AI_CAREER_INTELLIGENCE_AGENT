@@ -211,21 +211,6 @@ class _PostgresBackend(_Backend):
 
 
 # ---------------------------------------------------------------------------
-# Backend selection — happens once at module import
-# ---------------------------------------------------------------------------
-
-def _select_backend(db_path: str = "edgedash.db") -> _Backend:
-    url = os.environ.get("DATABASE_URL", "").strip()
-    if url:
-        backend: _Backend = _PostgresBackend(url)
-        logger.info("[storage] Backend: POSTGRES  (%s)", backend.name)
-    else:
-        backend = _SQLiteBackend(db_path)
-        logger.info("[storage] Backend: SQLite  (%s)", db_path)
-    return backend
-
-
-# ---------------------------------------------------------------------------
 # Backend selection — per db_path, cached per process
 # ---------------------------------------------------------------------------
 
@@ -294,18 +279,18 @@ def _execute(conn_or_cur: Any, sql: str, params: tuple = ()) -> Any:
     raise TypeError(f"Expected connection or cursor, got {type(conn_or_cur)}")
 
 
-def _fetchone(conn_or_cur: Any, sql: str, params: tuple = ()) -> Optional[dict]:
+def _fetchone(conn_or_cur: Any, sql: str, params: tuple = (), path: str = "edgedash.db") -> Optional[dict]:
+    """Execute sql, return one row as a normalized dict (datetimes → ISO strings)."""
     cur = _execute(conn_or_cur, sql, params)
-    row = cur.fetchone()
-    if row is None:
-        return None
-    return dict(row)
+    backend = _get_backend(path)
+    return backend.fetchrow(cur)
 
 
-def _fetchall(conn_or_cur: Any, sql: str, params: tuple = ()) -> list[dict]:
+def _fetchall(conn_or_cur: Any, sql: str, params: tuple = (), path: str = "edgedash.db") -> list[dict]:
+    """Execute sql, return all rows as normalized dicts (datetimes → ISO strings)."""
     cur = _execute(conn_or_cur, sql, params)
-    rows = cur.fetchall()
-    return [dict(r) for r in rows] if rows else []
+    backend = _get_backend(path)
+    return backend.fetchall(cur)
 
 
 def _adapt_sql(sql: str, path: str) -> str:
@@ -571,9 +556,9 @@ def upsert_listings(path: str, rows: list[dict]) -> int:
 
 def count_unscored(path: str) -> int:
     with _tx(path) as cx:
-        cur = _execute(cx, "SELECT COUNT(*) FROM listings WHERE fit_score IS NULL")
-        row = cur.fetchone()
-        return list(dict(row).values())[0] if row else 0
+        cur = _execute(cx, "SELECT COUNT(*) AS n FROM listings WHERE fit_score IS NULL")
+        row = _get_backend(path).fetchrow(cur)
+        return row["n"] if row else 0
 
 
 def get_unscored_listings(path: str, limit: int) -> list[dict]:
@@ -584,6 +569,7 @@ def get_unscored_listings(path: str, limit: int) -> list[dict]:
             f"SELECT * FROM listings WHERE fit_score IS NULL "
             f"ORDER BY fetched_at ASC LIMIT {p}",
             (limit,),
+            path=path,
         )
 
 
@@ -613,19 +599,19 @@ def null_scores(path: str, listing_ids: list[str]) -> None:
 
 def last_fetch_time(path: str) -> Optional[str]:
     with _tx(path) as cx:
-        row = _fetchone(cx, "SELECT MAX(fetched_at) AS v FROM listings")
+        row = _fetchone(cx, "SELECT MAX(fetched_at) AS v FROM listings", path=path)
         return row["v"] if row else None
 
 
 def last_scored_at(path: str) -> Optional[str]:
     with _tx(path) as cx:
-        row = _fetchone(cx, "SELECT MAX(scored_at) AS v FROM listings")
+        row = _fetchone(cx, "SELECT MAX(scored_at) AS v FROM listings", path=path)
         return row["v"] if row else None
 
 
 def last_gap_run_at(path: str) -> Optional[str]:
     with _tx(path) as cx:
-        row = _fetchone(cx, "SELECT MAX(run_at) AS v FROM gap_snapshots_v2")
+        row = _fetchone(cx, "SELECT MAX(run_at) AS v FROM gap_snapshots_v2", path=path)
         return row["v"] if row else None
 
 
@@ -637,6 +623,7 @@ def last_cycle_summary(path: str) -> Optional[dict]:
             f"SELECT agent, started_at, finished_at, status, notes "
             f"FROM cycle_log WHERE agent={p} ORDER BY id DESC LIMIT 1",
             ("cycle_summary",),
+            path=path,
         )
 
 
@@ -649,11 +636,13 @@ def get_listings(path: str, limit: int = 100, min_score: Optional[int] = None) -
                 f"SELECT * FROM listings WHERE fit_score >= {p} "
                 f"ORDER BY fit_score DESC LIMIT {p}",
                 (min_score, limit),
+                path=path,
             )
         return _fetchall(
             cx,
             f"SELECT * FROM listings ORDER BY fetched_at DESC LIMIT {p}",
             (limit,),
+            path=path,
         )
 
 
@@ -663,6 +652,7 @@ def get_scored_listings_with_components(path: str) -> list[dict]:
             cx,
             "SELECT id, fit_score, fit_reason, score_components FROM listings "
             "WHERE fit_score IS NOT NULL AND score_components IS NOT NULL",
+            path=path,
         )
 
 
@@ -673,6 +663,7 @@ def get_scored_listings_with_descriptions(path: str) -> list[dict]:
             "SELECT id, fit_score, description FROM listings "
             "WHERE fit_score IS NOT NULL "
             "AND description IS NOT NULL AND description != ''",
+            path=path,
         )
 
 
@@ -711,6 +702,7 @@ def get_cached_extraction(path: str, description_hash: str) -> Optional[dict]:
             cx,
             f"SELECT extraction_json FROM extraction_cache WHERE description_hash={p}",
             (description_hash,),
+            path=path,
         )
     if row is None:
         return None
@@ -788,7 +780,7 @@ def save_gap_snapshot_v2(path: str, run_at: str, gaps: list[dict]) -> None:
 def get_latest_gap_snapshot(path: str) -> list[dict]:
     p = _get_backend(path).ph()
     with _tx(path) as cx:
-        row = _fetchone(cx, "SELECT MAX(run_at) AS v FROM gap_snapshots_v2")
+        row = _fetchone(cx, "SELECT MAX(run_at) AS v FROM gap_snapshots_v2", path=path)
         run_at = row["v"] if row else None
         if not run_at:
             return []
@@ -799,6 +791,7 @@ def get_latest_gap_snapshot(path: str) -> list[dict]:
             f"FROM gap_snapshots_v2 WHERE run_at={p} "
             f"ORDER BY opportunity_cost DESC",
             (run_at,),
+            path=path,
         )
     for r in rows:
         r["example_ids"] = json.loads(r["example_ids"])
@@ -810,7 +803,7 @@ def get_gap_trend_data(path: str) -> dict:
     p = _get_backend(path).ph()
     with _tx(path) as cx:
         run_at_rows = _fetchall(
-            cx, "SELECT DISTINCT run_at FROM gap_snapshots_v2 ORDER BY run_at"
+            cx, "SELECT DISTINCT run_at FROM gap_snapshots_v2 ORDER BY run_at", path=path
         )
         if not run_at_rows:
             return {"snapshot_count": 0, "earliest_at": None, "latest_at": None,
@@ -824,6 +817,7 @@ def get_gap_trend_data(path: str) -> dict:
                 cx,
                 f"SELECT skill, opportunity_cost FROM gap_snapshots_v2 WHERE run_at={p}",
                 (ra,),
+                path=path,
             )
             return {r["skill"]: r["opportunity_cost"] for r in rs}
 
@@ -837,6 +831,7 @@ def get_gap_trend_data(path: str) -> dict:
             f"FROM gap_snapshots_v2 WHERE run_at={p} "
             f"ORDER BY opportunity_cost DESC LIMIT 10",
             (latest_at,),
+            path=path,
         )
         for r in top10:
             r["low_confidence"] = bool(r["low_confidence"])
@@ -885,6 +880,7 @@ def get_last_passing_cycle(path: str) -> Optional[dict]:
             f"FROM cycle_log WHERE agent={p} AND status={p} "
             f"ORDER BY id DESC LIMIT 1",
             ("cycle_summary", "ok"),
+            path=path,
         )
 
 
@@ -931,7 +927,7 @@ def _cli_check() -> None:
         p = backend.ph()
         with _tx(path) as cx:
             for tbl in tables:
-                row = _fetchone(cx, f"SELECT COUNT(*) AS n FROM {tbl}")
+                row = _fetchone(cx, f"SELECT COUNT(*) AS n FROM {tbl}", path=path)
                 count = row["n"] if row else "?"
                 print(f"  {tbl:<28} {count:>8} rows")
         print("Connection: OK")

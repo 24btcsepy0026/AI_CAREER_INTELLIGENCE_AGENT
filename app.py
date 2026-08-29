@@ -25,11 +25,79 @@ from edgedash.config import load_config
 # ---------------------------------------------------------------------------
 
 st.set_page_config(
-    page_title="EdgeDash",
+    page_title="EdgeDash — AI Career Intelligence",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
+
+# ---------------------------------------------------------------------------
+# Premium custom CSS
+# ---------------------------------------------------------------------------
+
+st.markdown("""
+<style>
+  /* ── Typography ── */
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+  html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+
+  /* ── Gradient header banner ── */
+  .dash-header {
+    background: linear-gradient(135deg, #0d1117 0%, #0f2027 40%, #203a43 70%, #2c5364 100%);
+    border-radius: 16px;
+    padding: 32px 36px 24px 36px;
+    margin-bottom: 24px;
+    border: 1px solid rgba(0, 188, 212, 0.2);
+    box-shadow: 0 4px 32px rgba(0, 188, 212, 0.08);
+  }
+  .dash-header h1 {
+    font-size: 2.2rem;
+    font-weight: 700;
+    color: #ffffff;
+    margin: 0 0 4px 0;
+    letter-spacing: -0.5px;
+  }
+  .dash-header .subtitle {
+    color: rgba(0, 188, 212, 0.9);
+    font-size: 0.95rem;
+    font-weight: 400;
+    margin: 0;
+  }
+
+  /* ── Metric cards ── */
+  [data-testid="metric-container"] {
+    background: #0d1117;
+    border: 1px solid rgba(0, 188, 212, 0.18);
+    border-radius: 12px;
+    padding: 16px 20px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+    transition: border-color 0.2s ease;
+  }
+  [data-testid="metric-container"]:hover { border-color: rgba(0, 188, 212, 0.45); }
+  [data-testid="stMetricLabel"] { color: rgba(255,255,255,0.55) !important; font-size: 0.8rem !important; }
+  [data-testid="stMetricValue"] { color: #ffffff !important; font-size: 1.5rem !important; font-weight: 600 !important; }
+
+  /* ── Section headings ── */
+  h2, h3 { color: #e0f7fa !important; }
+
+  /* ── Activity log rows ── */
+  .log-row-ok      { background: rgba(0,200,83,0.07);    border-left: 3px solid #00c853; padding: 6px 12px; border-radius: 6px; margin-bottom: 4px; }
+  .log-row-fail    { background: rgba(229,57,53,0.08);   border-left: 3px solid #e53935; padding: 6px 12px; border-radius: 6px; margin-bottom: 4px; }
+  .log-row-partial { background: rgba(255,179,0,0.07);   border-left: 3px solid #ffb300; padding: 6px 12px; border-radius: 6px; margin-bottom: 4px; }
+  .log-row-idle    { background: rgba(97,97,97,0.08);    border-left: 3px solid #616161; padding: 6px 12px; border-radius: 6px; margin-bottom: 4px; }
+
+  /* ── Dataframe overrides ── */
+  [data-testid="stDataFrame"] { border-radius: 10px; overflow: hidden; }
+
+  /* ── Divider ── */
+  hr { border-color: rgba(0, 188, 212, 0.12) !important; }
+
+  /* ── Footer ── */
+  .dash-footer { text-align: center; color: rgba(255,255,255,0.35); font-size: 0.78rem; padding-top: 8px; }
+  .dash-footer a { color: rgba(0, 188, 212, 0.7); text-decoration: none; }
+  .dash-footer a:hover { color: #00bcd4; }
+</style>
+""", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Config (cached forever — config.yaml doesn't change at runtime)
@@ -89,16 +157,18 @@ def _top_gaps(limit: int = 10) -> list[dict]:
 
 @st.cache_data(ttl=_TTL)
 def _counts() -> tuple[int, int]:
+    # Use two separate transactions to avoid cursor reuse issues on Postgres
     with storage._tx(DB) as cur:
-        cur = storage._execute(cur, "SELECT COUNT(*) AS c FROM listings")
-        row1 = cur.fetchone()
+        row1 = storage._fetchone(cur, "SELECT COUNT(*) AS c FROM listings", path=DB)
         total = row1["c"] if row1 else 0
-        
-        cur = storage._execute(cur, "SELECT COUNT(*) AS c FROM listings WHERE fit_score IS NOT NULL")
-        row2 = cur.fetchone()
+    with storage._tx(DB) as cur:
+        row2 = storage._fetchone(
+            cur,
+            "SELECT COUNT(*) AS c FROM listings WHERE fit_score IS NOT NULL",
+            path=DB,
+        )
         scored = row2["c"] if row2 else 0
-        
-        return total, scored
+    return total, scored
 
 
 # ---------------------------------------------------------------------------
@@ -110,12 +180,17 @@ def _fmt_ts(iso: Optional[str], fallback: str = "—") -> str:
     if not iso:
         return fallback
     try:
-        dt = datetime.fromisoformat(iso)
+        # Handle datetime objects that may come from Postgres backend
+        if isinstance(iso, datetime):
+            dt = iso
+        else:
+            dt = datetime.fromisoformat(str(iso))
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.strftime("%Y-%m-%d %H:%M UTC")
     except (ValueError, TypeError):
-        return iso[:19] if iso else fallback
+        s = str(iso)
+        return s[:19] if s else fallback
 
 
 def _ms_to_s(ms_str: str) -> str:
@@ -189,16 +264,21 @@ def _render_header() -> None:
         and passing is not None
     )
 
-    st.title("⚡ EdgeDash — Agent Activity Dashboard")
+    st.markdown("""
+    <div class="dash-header">
+      <h1>\u26a1 EdgeDash</h1>
+      <p class="subtitle">AI Career Intelligence Agent \u2014 Real-time job market analysis powered by Gemini</p>
+    </div>
+    """, unsafe_allow_html=True)
 
     # Stale-data warning banner
     if latest is None:
-        st.info("No cycles yet — first run is scheduled for shortly.")
+        st.info("\U0001f680 No cycles yet \u2014 trigger the first run via GitHub Actions or run `python run_cycle.py` locally.")
         return
 
     if is_stale:
         st.warning(
-            f"⚠️  **Newest cycle is '{current_verdict}'.** "
+            f"\u26a0\ufe0f  **Newest cycle is '{current_verdict}'.** "
             f"Data panels below show the last **verified** cycle "
             f"({_fmt_ts(passing['started_at'])}).  "
             "The activity log shows all cycles including failures."
@@ -213,7 +293,7 @@ def _render_header() -> None:
     with col2:
         st.metric("Total listings", f"{total:,}")
     with col3:
-        pct = f"{100*scored//total}%" if total else "—"
+        pct = f"{100*scored//total}%" if total else "\u2014"
         st.metric("Scored", f"{scored:,}  ({pct})")
     with col4:
         st.metric("Current verdict", _verdict_badge(current_verdict))
@@ -226,71 +306,71 @@ def _render_header() -> None:
 # ---------------------------------------------------------------------------
 
 def _render_activity_log() -> None:
-    st.subheader("🔄 Agent Activity Log  *(all cycles, most recent first)*")
+    st.subheader("\U0001f504 Agent Activity Log")
+    st.caption("\U0001f7e2 ok  |  \U0001f7e1 partial / nothing_to_do  |  \U0001f534 degraded / failed  *(most recent first)*")
 
     rows = _activity_log(30)
     if not rows:
         st.info("No cycles recorded yet.")
         return
 
-    # Legend
-    st.caption("🟢 ok  |  🟡 partial / nothing_to_do  |  🔴 degraded / failed")
-
-    # Column header
+    # Table header
     hcols = st.columns([2, 1, 3, 2, 2, 1, 1])
     headers = ["Timestamp", "Verdict", "Agents run", "Skipped", "Failed check", "Retries", "Wall time"]
     for col, label in zip(hcols, headers):
-        col.markdown(f"**{label}**")
-    st.markdown("---")
+        col.markdown(
+            f"<small style='color:rgba(255,255,255,0.5);font-weight:600;text-transform:uppercase;letter-spacing:0.05em'>{label}</small>",
+            unsafe_allow_html=True,
+        )
 
     for row in rows:
         parsed     = _parse_notes(row.get("notes"))
         verdict    = row["status"]
         ts         = _fmt_ts(row.get("started_at"))
-        ran        = parsed.get("ran", "—")
-        skipped    = parsed.get("skipped", "—")
-        failed_chk = parsed.get("failed_checks", "—")
+        ran        = parsed.get("ran", "\u2014")
+        skipped    = parsed.get("skipped", "\u2014")
+        failed_chk = parsed.get("failed_checks", "\u2014")
         retries    = parsed.get("retries", "0")
         wall       = _wall_time(row.get("notes"))
 
         # Tidy up long agent lists — one per line using bullet points
         def _agent_pills(s: str) -> str:
-            if not s or s in ("—", "none"):
-                return "—"
+            if not s or s in ("\u2014", "none"):
+                return "\u2014"
             parts = [p.strip() for p in s.split(",") if p.strip()]
-            return "  \n".join(f"• {p}" for p in parts)
+            return "  \n".join(f"\u2022 {p}" for p in parts)
 
-        # Background colour via markdown container trick
         if verdict == "ok":
-            badge = "🟢 ok"
-            bg_style = "background:#1a3a2a; border-left:4px solid #28a745; padding:6px 10px; border-radius:4px; margin-bottom:4px;"
+            badge = "\U0001f7e2 ok"
+            row_class = "log-row-ok"
         elif verdict in ("degraded", "failed"):
-            badge = "🔴 " + verdict
-            bg_style = "background:#3a1a1a; border-left:4px solid #dc3545; padding:6px 10px; border-radius:4px; margin-bottom:4px;"
-        elif verdict in ("partial",):
-            badge = "🟡 partial"
-            bg_style = "background:#3a3010; border-left:4px solid #ffc107; padding:6px 10px; border-radius:4px; margin-bottom:4px;"
+            badge = "\U0001f534 " + verdict
+            row_class = "log-row-fail"
+        elif verdict == "partial":
+            badge = "\U0001f7e1 partial"
+            row_class = "log-row-partial"
         elif verdict == "nothing_to_do":
-            badge = "⚪ idle"
-            bg_style = "background:#1e1e1e; border-left:4px solid #6c757d; padding:6px 10px; border-radius:4px; margin-bottom:4px;"
+            badge = "\u26aa idle"
+            row_class = "log-row-idle"
         else:
             badge = verdict
-            bg_style = "background:#1e1e1e; border-left:4px solid #aaa; padding:6px 10px; border-radius:4px; margin-bottom:4px;"
+            row_class = "log-row-idle"
 
         with st.container():
-            st.markdown(f'<div style="{bg_style}">', unsafe_allow_html=True)
             rcols = st.columns([2, 1, 3, 2, 2, 1, 1])
-            rcols[0].markdown(f"`{ts}`")
+            rcols[0].markdown(
+                f'<div class="{row_class}"><code style="font-size:0.8rem">{ts}</code></div>',
+                unsafe_allow_html=True,
+            )
             rcols[1].markdown(badge)
             rcols[2].markdown(_agent_pills(ran))
             rcols[3].markdown(_agent_pills(skipped))
-            if failed_chk and failed_chk not in ("—", "none"):
-                rcols[4].markdown(f"⚠ `{failed_chk}`")
+            if failed_chk and failed_chk not in ("\u2014", "none"):
+                rcols[4].markdown(f"\u26a0 `{failed_chk}`")
             else:
-                rcols[4].markdown("—")
+                rcols[4].markdown("\u2014")
             rcols[5].markdown(retries)
             rcols[6].markdown(wall)
-            st.markdown("</div>", unsafe_allow_html=True)
 
     st.divider()
 
@@ -521,8 +601,10 @@ ts_str = _fmt_ts(passing["started_at"]) if passing else "never"
 
 st.markdown(
     f"""
-    <div style="text-align: center; color: gray; font-size: small;">
-        Last successful cycle: {ts_str} | <a href="https://github.com" target="_blank" style="color: gray;">GitHub Repo</a>
+    <div class="dash-footer">
+        Last successful cycle: {ts_str} &nbsp;|&nbsp;
+        <a href="https://github.com/24btcsepy0026/AI_CAREER_INTELLIGENCE_AGENT" target="_blank">GitHub Repo</a>
+        &nbsp;|&nbsp; EdgeDash v1.0 &middot; Powered by Gemini AI
     </div>
     """,
     unsafe_allow_html=True
