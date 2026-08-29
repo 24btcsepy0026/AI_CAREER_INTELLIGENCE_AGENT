@@ -779,8 +779,8 @@ def save_gap_snapshot_v2(path: str, run_at: str, gaps: list[dict]) -> None:
                 (
                     run_at, gap["skill"], gap["opportunity_cost"],
                     gap["listings_blocked"], gap["mean_score"], gap["top_score"],
-                    gap["sample_size"], bool(gap.get("low_confidence", False)),
-                    bool(gap.get("also_nice_to_have", False)), json.dumps(gap["example_ids"]),
+                    gap["sample_size"], int(bool(gap.get("low_confidence", False))),
+                    int(bool(gap.get("also_nice_to_have", False))), json.dumps(gap["example_ids"]),
                 ),
             )
 
