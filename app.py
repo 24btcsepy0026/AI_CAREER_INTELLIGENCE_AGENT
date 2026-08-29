@@ -58,31 +58,22 @@ def _last_passing_cycle() -> Optional[dict]:
 @st.cache_data(ttl=_TTL)
 def _latest_cycle() -> Optional[dict]:
     """Most recent cycle_summary row regardless of status."""
-    conn = storage._connect(DB)
-    try:
-        row = conn.execute(
+    with storage._tx(DB) as cur:
+        sql = storage._adapt_sql(
             "SELECT agent, started_at, finished_at, status, notes "
-            "FROM cycle_log WHERE agent='cycle_summary' ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-        return dict(row) if row else None
-    finally:
-        conn.close()
+            "FROM cycle_log WHERE agent='cycle_summary' ORDER BY id DESC LIMIT 1", DB)
+        return storage._fetchone(cur, sql)
 
 
 @st.cache_data(ttl=_TTL)
 def _activity_log(limit: int = 30) -> list[dict]:
     """All cycle_summary rows, newest first, for the activity log panel."""
-    conn = storage._connect(DB)
-    try:
-        rows = conn.execute(
+    with storage._tx(DB) as cur:
+        sql = storage._adapt_sql(
             "SELECT id, started_at, finished_at, status, notes "
             "FROM cycle_log WHERE agent='cycle_summary' "
-            "ORDER BY id DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
-        return [dict(r) for r in rows]
-    finally:
-        conn.close()
+            "ORDER BY id DESC LIMIT ?", DB)
+        return storage._fetchall(cur, sql, (limit,))
 
 
 @st.cache_data(ttl=_TTL)
@@ -98,15 +89,16 @@ def _top_gaps(limit: int = 10) -> list[dict]:
 
 @st.cache_data(ttl=_TTL)
 def _counts() -> tuple[int, int]:
-    conn = storage._connect(DB)
-    try:
-        total  = conn.execute("SELECT COUNT(*) FROM listings").fetchone()[0]
-        scored = conn.execute(
-            "SELECT COUNT(*) FROM listings WHERE fit_score IS NOT NULL"
-        ).fetchone()[0]
+    with storage._tx(DB) as cur:
+        cur = storage._execute(cur, "SELECT COUNT(*) AS c FROM listings")
+        row1 = cur.fetchone()
+        total = row1["c"] if row1 else 0
+        
+        cur = storage._execute(cur, "SELECT COUNT(*) AS c FROM listings WHERE fit_score IS NOT NULL")
+        row2 = cur.fetchone()
+        scored = row2["c"] if row2 else 0
+        
         return total, scored
-    finally:
-        conn.close()
 
 
 # ---------------------------------------------------------------------------
