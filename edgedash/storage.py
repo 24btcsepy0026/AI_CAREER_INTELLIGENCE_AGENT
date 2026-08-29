@@ -555,12 +555,12 @@ def upsert_listings(path: str, rows: list[dict]) -> int:
             cur = _execute(cx, sql, (
                 lid,
                 row.get("external_id"),
-                row["title"],
-                row["company"],
-                row["location"],
-                row["url"],
-                row.get("description", ""),
-                row["source"],
+                row.get("title") or "",
+                row.get("company") or "",
+                row.get("location") or "",
+                row.get("url") or "",
+                row.get("description") or "",
+                row.get("source") or "",
                 row.get("posted_at"),
                 row.get("fetched_at", now),
             ))
