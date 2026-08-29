@@ -141,14 +141,11 @@ def _utc_days_ago(n: int) -> str:
 
 
 def _latest_gap_run_at(db: str) -> Optional[str]:
-    conn = storage._connect(db)
-    try:
-        row = conn.execute(
-            "SELECT MAX(run_at) FROM gap_snapshots_v2"
-        ).fetchone()
-        return row[0] if row else None
-    finally:
-        conn.close()
+    with storage._tx(db) as cx:
+        row = storage._fetchone(
+            cx, "SELECT MAX(run_at) AS v FROM gap_snapshots_v2", path=db
+        )
+        return row["v"] if row else None
 
 
 def _skills_in_db(db: str) -> set[str]:
@@ -156,15 +153,15 @@ def _skills_in_db(db: str) -> set[str]:
     run_at = _latest_gap_run_at(db)
     if not run_at:
         return set()
-    conn = storage._connect(db)
-    try:
-        rows = conn.execute(
-            "SELECT DISTINCT skill FROM gap_snapshots_v2 WHERE run_at = ?",
+    p = storage._get_backend(db).ph()
+    with storage._tx(db) as cx:
+        rows = storage._fetchall(
+            cx,
+            f"SELECT DISTINCT skill FROM gap_snapshots_v2 WHERE run_at={p}",
             (run_at,),
-        ).fetchall()
-        return {r[0] for r in rows}
-    finally:
-        conn.close()
+            path=db,
+        )
+    return {r["skill"] for r in rows}
 
 
 def _canonicalise_skill(raw: str, db: str) -> Optional[str]:
@@ -208,31 +205,31 @@ def companies_hiring(days: int = 7) -> dict:
     days = max(1, min(90, int(days)))   # belt-and-suspenders clamp
     db = _db()
     cutoff = _utc_days_ago(days)
+    p = storage._get_backend(db).ph()
 
-    conn = storage._connect(db)
-    try:
-        rows = conn.execute(
-            """
+    with storage._tx(db) as cx:
+        rows = storage._fetchall(
+            cx,
+            f"""
             SELECT company,
                    COUNT(*) AS listing_count,
                    MAX(posted_at) AS latest_posting
             FROM listings
-            WHERE posted_at >= ?
+            WHERE posted_at >= {p}
               AND company IS NOT NULL
               AND company != ''
             GROUP BY company
             ORDER BY listing_count DESC, latest_posting DESC
             """,
             (cutoff,),
-        ).fetchall()
-    finally:
-        conn.close()
+            path=db,
+        )
 
     result = [
         {
             "company": r["company"],
             "listing_count": r["listing_count"],
-            "latest_posting": (r["latest_posting"] or "")[:10],
+            "latest_posting": str(r["latest_posting"] or "")[:10],
         }
         for r in rows
     ]
@@ -268,22 +265,22 @@ def companies_hiring(days: int = 7) -> dict:
 def best_matches(n: int = 10) -> dict:
     n = max(1, min(25, int(n)))
     db = _db()
+    p = storage._get_backend(db).ph()
 
-    conn = storage._connect(db)
-    try:
-        rows = conn.execute(
-            """
+    with storage._tx(db) as cx:
+        rows = storage._fetchall(
+            cx,
+            f"""
             SELECT title, company, location, url,
                    fit_score, fit_reason, posted_at
             FROM listings
             WHERE fit_score IS NOT NULL
             ORDER BY fit_score DESC
-            LIMIT ?
+            LIMIT {p}
             """,
             (n,),
-        ).fetchall()
-    finally:
-        conn.close()
+            path=db,
+        )
 
     result = [
         {
@@ -293,13 +290,13 @@ def best_matches(n: int = 10) -> dict:
             "location":   r["location"],
             "url":        r["url"],
             "reason":     r["fit_reason"] or "",
-            "posted_at":  (r["posted_at"] or "")[:10],
+            "posted_at":  str(r["posted_at"] or "")[:10],
         }
         for r in rows
     ]
     summary = (
         f"Top {len(result)} listings by fit score"
-        + (f" (scores {result[-1]['score']}–{result[0]['score']})" if result else "")
+        + (f" (scores {result[-1]['score']}\u2013{result[0]['score']})" if result else "")
     )
     return {"rows": result, "summary": summary}
 
@@ -331,23 +328,23 @@ def top_gaps(n: int = 5) -> dict:
     run_at = _latest_gap_run_at(db)
     if not run_at:
         return {"rows": [], "summary": "No gap data yet."}
+    p = storage._get_backend(db).ph()
 
-    conn = storage._connect(db)
-    try:
-        rows = conn.execute(
-            """
+    with storage._tx(db) as cx:
+        rows = storage._fetchall(
+            cx,
+            f"""
             SELECT skill, opportunity_cost, listings_blocked,
                    mean_score, top_score, sample_size, low_confidence,
                    also_nice_to_have
             FROM gap_snapshots_v2
-            WHERE run_at = ?
+            WHERE run_at = {p}
             ORDER BY opportunity_cost DESC
-            LIMIT ?
+            LIMIT {p}
             """,
             (run_at, n),
-        ).fetchall()
-    finally:
-        conn.close()
+            path=db,
+        )
 
     result = [
         {
@@ -362,7 +359,7 @@ def top_gaps(n: int = 5) -> dict:
         }
         for r in rows
     ]
-    summary = f"Top {len(result)} gaps from snapshot at {run_at[:10]}"
+    summary = f"Top {len(result)} gaps from snapshot at {str(run_at)[:10]}"
     return {"rows": result, "summary": summary}
 
 
@@ -402,16 +399,17 @@ def gap_detail(skill: str = "") -> dict:
     if not run_at:
         return {"rows": [], "summary": "No gap data yet."}
 
+    p = storage._get_backend(db).ph()
+
     # Get example_ids from the snapshot
-    conn = storage._connect(db)
-    try:
-        row = conn.execute(
-            "SELECT opportunity_cost, listings_blocked, example_ids "
-            "FROM gap_snapshots_v2 WHERE run_at = ? AND skill = ?",
+    with storage._tx(db) as cx:
+        row = storage._fetchone(
+            cx,
+            f"SELECT opportunity_cost, listings_blocked, example_ids "
+            f"FROM gap_snapshots_v2 WHERE run_at={p} AND skill={p}",
             (run_at, canon),
-        ).fetchone()
-    finally:
-        conn.close()
+            path=db,
+        )
 
     if not row:
         return {
@@ -436,17 +434,16 @@ def gap_detail(skill: str = "") -> dict:
         }
 
     # Fetch the actual listing rows — use placeholders, never interpolation
-    placeholders = ",".join("?" * len(example_ids))
-    conn2 = storage._connect(db)
-    try:
-        listings = conn2.execute(
+    placeholders = ",".join([p] * len(example_ids))
+    with storage._tx(db) as cx:
+        listings = storage._fetchall(
+            cx,
             f"SELECT title, company, location, url, fit_score, fit_reason "
             f"FROM listings WHERE id IN ({placeholders}) "
             f"ORDER BY fit_score DESC",
-            example_ids,
-        ).fetchall()
-    finally:
-        conn2.close()
+            tuple(example_ids),
+            path=db,
+        )
 
     result = [
         {
@@ -490,31 +487,33 @@ def gap_detail(skill: str = "") -> dict:
 def trend(weeks: int = 3) -> dict:
     weeks = max(1, min(12, int(weeks)))
     db = _db()
+    p = storage._get_backend(db).ph()
 
-    conn = storage._connect(db)
-    try:
+    with storage._tx(db) as cx:
         # Get the N most-recent distinct run_ats
-        run_ats_rows = conn.execute(
-            "SELECT DISTINCT run_at FROM gap_snapshots_v2 "
-            "ORDER BY run_at DESC LIMIT ?",
+        run_ats_rows = storage._fetchall(
+            cx,
+            f"SELECT DISTINCT run_at FROM gap_snapshots_v2 "
+            f"ORDER BY run_at DESC LIMIT {p}",
             (weeks,),
-        ).fetchall()
+            path=db,
+        )
 
         if not run_ats_rows:
             return {"rows": [], "summary": "No gap snapshot data yet."}
 
-        run_ats = [r[0] for r in run_ats_rows]
+        run_ats = [str(r["run_at"]) for r in run_ats_rows]
         # Load skill → cost for each snapshot
         snapshots: dict[str, dict[str, float]] = {}
         for run_at in run_ats:
-            rows = conn.execute(
-                "SELECT skill, opportunity_cost FROM gap_snapshots_v2 "
-                "WHERE run_at = ?",
+            rows = storage._fetchall(
+                cx,
+                f"SELECT skill, opportunity_cost FROM gap_snapshots_v2 "
+                f"WHERE run_at = {p}",
                 (run_at,),
-            ).fetchall()
+                path=db,
+            )
             snapshots[run_at] = {r["skill"]: r["opportunity_cost"] for r in rows}
-    finally:
-        conn.close()
 
     if len(run_ats) < 2:
         # Only one snapshot — report it as-is, no delta
@@ -604,17 +603,21 @@ def trend(weeks: int = 3) -> dict:
 )
 def listing_count() -> dict:
     db = _db()
-    conn = storage._connect(db)
-    try:
-        total = conn.execute("SELECT COUNT(*) FROM listings").fetchone()[0]
-        scored = conn.execute(
-            "SELECT COUNT(*) FROM listings WHERE fit_score IS NOT NULL"
-        ).fetchone()[0]
-        newest = conn.execute(
-            "SELECT MAX(posted_at) FROM listings"
-        ).fetchone()[0]
-    finally:
-        conn.close()
+    with storage._tx(db) as cx:
+        r_total = storage._fetchone(cx, "SELECT COUNT(*) AS n FROM listings", path=db)
+        total = r_total["n"] if r_total else 0
+    with storage._tx(db) as cx:
+        r_scored = storage._fetchone(
+            cx,
+            "SELECT COUNT(*) AS n FROM listings WHERE fit_score IS NOT NULL",
+            path=db,
+        )
+        scored = r_scored["n"] if r_scored else 0
+    with storage._tx(db) as cx:
+        r_newest = storage._fetchone(
+            cx, "SELECT MAX(posted_at) AS v FROM listings", path=db
+        )
+        newest = r_newest["v"] if r_newest else None
 
     unscored = total - scored
     pct = round(100 * scored / total, 1) if total else 0.0
@@ -623,11 +626,11 @@ def listing_count() -> dict:
         "scored":         scored,
         "unscored":       unscored,
         "pct_scored":     pct,
-        "newest_listing": (newest or "")[:10],
+        "newest_listing": str(newest or "")[:10],
     }
     summary = (
         f"{total} listings total; {scored} scored ({pct}%), "
-        f"{unscored} unscored; newest posted {(newest or '?')[:10]}"
+        f"{unscored} unscored; newest posted {str(newest or '?')[:10]}"
     )
     return {"rows": [row], "summary": summary}
 
@@ -661,19 +664,17 @@ def skill_demand(skill: str = "") -> dict:
     canon = _canonical(skill, aliases)
 
     db = _db()
-    conn = storage._connect(db)
-    try:
-        cache_rows = conn.execute(
-            "SELECT extraction_json FROM extraction_cache"
-        ).fetchall()
-    finally:
-        conn.close()
+    with storage._tx(db) as cx:
+        cache_rows = storage._fetchall(
+            cx, "SELECT extraction_json FROM extraction_cache", path=db
+        )
 
     required_count  = 0
     nice_count      = 0
     total_listings  = 0
 
-    for (raw_json,) in cache_rows:
+    for r in cache_rows:
+        raw_json = r.get("extraction_json", "")
         try:
             data = json.loads(raw_json)
         except (json.JSONDecodeError, TypeError):
